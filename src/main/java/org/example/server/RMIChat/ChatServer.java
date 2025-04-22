@@ -3,10 +3,11 @@ package org.example.server.RMIChat;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.UnknownHostException;
-import java.rmi.AlreadyBoundException;
 import java.rmi.Naming;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
+import java.rmi.server.RemoteServer;
+import java.rmi.server.ServerNotActiveException;
 import java.rmi.server.UnicastRemoteObject;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -23,7 +24,12 @@ public class ChatServer extends UnicastRemoteObject implements ChatRemote {
     @Override
     public void sendMessage(String username, String message) throws RemoteException {
         for (ChatRemote client : clients.values()) {
-            client.receiveMessage(username, message);
+            try {
+                client.receiveMessage(username, message);
+            } catch (RemoteException e) {
+                log("Error al enviar mensaje a un cliente: " + e.getMessage());
+                // Podríamos considerar eliminar este cliente si no está disponible
+            }
         }
     }
 
@@ -41,19 +47,29 @@ public class ChatServer extends UnicastRemoteObject implements ChatRemote {
     public void registerClient(String username, ChatRemote client) throws RemoteException {
         clients.put(username, client);
         String clientIP = "Desconocida";
+
         try {
-            clientIP = InetAddress.getLocalHost().getHostAddress();
-        } catch (UnknownHostException e) {
-            log("No se pudo obtener la dirección IP local: " + e.getMessage());
+            // Obtener la IP real del cliente que se conecta
+            clientIP = RemoteServer.getClientHost();
+            log("Cliente conectado desde IP: " + clientIP);
+        } catch (ServerNotActiveException e) {
+            log("No se pudo obtener la IP del cliente remoto: " + e.getMessage());
+            try {
+                clientIP = InetAddress.getLocalHost().getHostAddress();
+                log("Usando IP local como alternativa: " + clientIP);
+            } catch (UnknownHostException ex) {
+                log("No se pudo obtener la dirección IP local: " + ex.getMessage());
+            }
         }
+
         LocalDateTime connectTime = LocalDateTime.now();
         clientInfo.put(username, new ClientInfo(clientIP, connectTime));
-        System.out.println("Cliente registrado: " + username + " en " + connectTime);
+        System.out.println("Cliente registrado: " + username + " desde IP: " + clientIP + " en " + connectTime);
     }
 
     public void unregisterClient(String username) throws RemoteException {
         clients.remove(username);
-        ClientInfo info = clientInfo.remove(username);
+        ClientInfo info = clientInfo.get(username);
         if (info != null) {
             info.setDisconnectTime(LocalDateTime.now());
             System.out.println("Cliente desregistrado: " + username + " a las " + info.getDisconnectTime());
@@ -97,6 +113,9 @@ public class ChatServer extends UnicastRemoteObject implements ChatRemote {
 
     public static void main(String[] args) {
         try {
+            // Establecer la propiedad de hostname para RMI
+            System.setProperty("java.rmi.server.hostname", "192.168.100.89");
+
             // Crear el registro RMI en el puerto 1099
             LocateRegistry.createRegistry(1099);
 
